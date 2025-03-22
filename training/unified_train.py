@@ -10,7 +10,7 @@ import json
 
 from data_loader import FinancialDataLoader
 from environment import TradingEnvironment
-from timesnet_factory import create_maddqn
+from structure.timesnet_factory import create_maddqn
 
 # Configure logging
 logging.basicConfig(

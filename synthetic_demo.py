@@ -1,4 +1,3 @@
-import os
 import numpy as np
 import pandas as pd
 import torch
@@ -8,8 +7,7 @@ import logging
 
 # Import the components
 from environment import TradingEnvironment
-from maddqn_basic import MADDQN
-from data_loader import FinancialDataLoader
+from structure.maddqn_basic import MADDQN
 
 # Configure logging
 logging.basicConfig(

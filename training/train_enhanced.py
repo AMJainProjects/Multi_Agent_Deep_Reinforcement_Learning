@@ -4,7 +4,7 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import logging
 
-from maddqn_enhanced import MADDQN
+from structure.maddqn_enhanced import MADDQN
 from environment import TradingEnvironment
 from data_loader import FinancialDataLoader
 

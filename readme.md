@@ -54,7 +54,7 @@ tqdm
 To run a quick demo with synthetic data:
 
 ```bash
-python demo.py
+python synthetic_demo.py
 ```
 
 ### Training

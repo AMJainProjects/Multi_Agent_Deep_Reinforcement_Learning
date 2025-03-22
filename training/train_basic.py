@@ -10,7 +10,7 @@ import json
 
 from data_loader import FinancialDataLoader
 from environment import TradingEnvironment
-from maddqn_basic import MADDQN
+from structure.maddqn_basic import MADDQN
 
 # Configure logging
 logging.basicConfig(

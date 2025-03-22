@@ -8,7 +8,7 @@ or enhanced TimesNet implementation.
 import argparse
 import logging
 import os
-from unified_train import train_maddqn
+from training.unified_train import train_maddqn
 
 # Configure logging
 logging.basicConfig(
