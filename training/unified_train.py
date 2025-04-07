@@ -11,6 +11,8 @@ import json
 from data_loader import FinancialDataLoader
 from environment import TradingEnvironment
 from structure.timesnet_factory import create_maddqn
+# Add imports for Plotly visualization utilities
+from plotly_utils.plotly_utils import plot_training_results, plot_multi_metric_comparison
 
 # Configure logging
 logging.basicConfig(
@@ -52,6 +54,10 @@ def train_maddqn(args):
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     experiment_dir = os.path.join(args.output_dir, f"maddqn_{args.timesnet_type}_{timestamp}")
     os.makedirs(experiment_dir, exist_ok=True)
+
+    # Create dashboards directory
+    dashboards_dir = os.path.join(experiment_dir, 'dashboards')
+    os.makedirs(dashboards_dir, exist_ok=True)
 
     # Save configuration
     with open(os.path.join(experiment_dir, 'config.json'), 'w') as f:
@@ -220,7 +226,7 @@ def train_maddqn(args):
             }, checkpoint_path)
             logger.info(f"Saved checkpoint to {checkpoint_path}")
 
-    # Plot training results
+    # Traditional matplotlib training plots
     plt.figure(figsize=(15, 10))
 
     # Episode rewards
@@ -253,6 +259,21 @@ def train_maddqn(args):
     # Save figure
     plt.tight_layout()
     plt.savefig(os.path.join(experiment_dir, 'training_results.png'))
+    plt.close()
+
+    # Create Plotly interactive training visualization
+    training_dashboard_path = os.path.join(dashboards_dir, 'training_dashboard.html')
+    plot_training_results(
+        episode_rewards=episode_rewards,
+        total_values=total_values,
+        risk_loss_history=risk_loss_history,
+        return_loss_history=return_loss_history,
+        final_loss_history=final_loss_history,
+        save_path=training_dashboard_path,
+        show=False,
+        title_prefix=f"{args.timesnet_type.capitalize()} "
+    )
+    logger.info(f"Interactive training dashboard saved to {training_dashboard_path}")
 
     # Save final model
     final_model_path = os.path.join(experiment_dir, 'model_final.pt')
@@ -266,6 +287,47 @@ def train_maddqn(args):
         'args': vars(args)
     }, final_model_path)
     logger.info(f"Saved final model to {final_model_path}")
+
+    # If we have test data, do a quick evaluation
+    if args.quick_eval and 'test_data' in locals():
+        logger.info("Performing quick evaluation on test data...")
+
+        # Create test environment
+        test_env = TradingEnvironment(
+            test_data,
+            window_size=args.window_size,
+            initial_balance=args.initial_balance,
+            transaction_fee=args.transaction_fee
+        )
+
+        # Run test episode
+        state = test_env.reset()
+        done = False
+
+        test_rewards = []
+        test_values = []
+        actions = []
+
+        while not done:
+            # Select action with no exploration
+            action, _, _ = maddqn.select_action(state, epsilon=0.0)
+
+            # Take action in environment
+            next_state, reward, done, info = test_env.step(action)
+
+            # Record data
+            test_rewards.append(reward)
+            test_values.append(info['total_value'])
+            actions.append(action)
+
+            # Update state
+            state = next_state
+
+        # Calculate test metrics
+        cumulative_return = (test_env.total_value - args.initial_balance) / args.initial_balance * 100
+        logger.info(f"Quick Evaluation Results:")
+        logger.info(f"  Cumulative Return: {cumulative_return:.2f}%")
+        logger.info(f"  Final Value: ${test_env.total_value:.2f}")
 
     return maddqn, experiment_dir
 
@@ -307,6 +369,7 @@ def main():
     parser.add_argument('--output-dir', type=str, default='./results', help='Directory to save results')
     parser.add_argument('--seed', type=int, default=None, help='Random seed')
     parser.add_argument('--use-cuda', action='store_true', help='Use CUDA if available')
+    parser.add_argument('--quick-eval', action='store_true', help='Perform quick evaluation after training')
 
     # TimesNet implementation selection
     parser.add_argument('--timesnet-type', type=str, choices=['basic', 'enhanced'], default='basic',
@@ -321,6 +384,7 @@ def main():
     maddqn, experiment_dir = train_maddqn(args)
 
     logger.info(f"Training complete. Results saved to {experiment_dir}")
+    logger.info(f"Interactive visualizations available in {os.path.join(experiment_dir, 'dashboards')}")
 
 
 if __name__ == "__main__":

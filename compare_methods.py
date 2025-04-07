@@ -12,6 +12,9 @@ from data_loader import FinancialDataLoader
 from environment import TradingEnvironment
 from structure.timesnet_factory import create_maddqn
 
+# Import Plotly visualization functions
+from plotly_utils.plotly_utils import plot_strategy_comparison, plot_multi_metric_comparison, create_dashboard
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -273,6 +276,10 @@ def evaluate_strategies(args):
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
 
+    # Create dashboards directory
+    dashboards_dir = os.path.join(args.output_dir, 'dashboards')
+    os.makedirs(dashboards_dir, exist_ok=True)
+
     # Load and preprocess data
     logger.info("Loading and preprocessing data")
     data_loader = FinancialDataLoader(cache_dir=args.data_cache)
@@ -302,6 +309,7 @@ def evaluate_strategies(args):
 
     # Results storage
     all_results = {}
+    all_data = {}  # Store data for dashboard creation
 
     # Initialize counters for risk and return agents (if model provided)
     risk_agent_best_count = 0
@@ -319,6 +327,7 @@ def evaluate_strategies(args):
 
         # Store results for this ticker
         ticker_results = {}
+        ticker_data = {}
 
         # Run each strategy
         for strategy_name, strategy in strategies.items():
@@ -331,6 +340,13 @@ def evaluate_strategies(args):
                 initial_balance=args.initial_balance,
                 transaction_fee=args.transaction_fee
             )
+
+            # Record data for visualization
+            prices = []
+            actions = []
+            portfolio_values = []
+            risk_actions = []
+            return_actions = []
 
             # Special handling for MADDQN
             if strategy_name == 'MADDQN':
@@ -409,6 +425,13 @@ def evaluate_strategies(args):
                             'final_action': action
                         })
 
+                        # Record data for visualization
+                        prices.append(env._get_price())
+                        actions.append(action)
+                        portfolio_values.append(env.total_value)
+                        risk_actions.append(risk_action)
+                        return_actions.append(return_action)
+
                         # Take action in environment
                         next_state, reward, done, info = env.step(action)
 
@@ -416,11 +439,39 @@ def evaluate_strategies(args):
                         state = next_state
             else:
                 # Run other strategies
-                run_strategy(env, strategy)
+                state = env.reset()
+                done = False
+
+                while not done:
+                    # Select action using strategy
+                    action = strategy.select_action(state)
+
+                    # Record data for visualization
+                    prices.append(env._get_price())
+                    actions.append(action)
+                    portfolio_values.append(env.total_value)
+
+                    # Take action in environment
+                    next_state, reward, done, info = env.step(action)
+
+                    # Update state
+                    state = next_state
 
             # Calculate metrics
             metrics = calculate_metrics(env)
             ticker_results[strategy_name] = metrics
+
+            # Store data for dashboard creation
+            ticker_data[strategy_name] = {
+                'prices': prices,
+                'actions': actions,
+                'portfolio_values': portfolio_values
+            }
+
+            # Add risk and return actions if available
+            if strategy_name == 'MADDQN':
+                ticker_data[strategy_name]['risk_actions'] = risk_actions
+                ticker_data[strategy_name]['return_actions'] = return_actions
 
             # Display metrics
             logger.info(f"Results for {strategy_name} on {ticker}:")
@@ -429,6 +480,7 @@ def evaluate_strategies(args):
 
         # Save results for this ticker
         all_results[ticker] = ticker_results
+        all_data[ticker] = ticker_data
 
     # Calculate average metrics across all tickers
     if len(tickers) > 1:
@@ -471,7 +523,7 @@ def evaluate_strategies(args):
     results_df.to_csv(results_csv_path, index=False)
     logger.info(f"Saved comparison results to {results_csv_path}")
 
-    # Create comparison charts
+    # Create traditional matplotlib/seaborn comparison charts
     # 1. Cumulative returns by ticker and strategy
     plt.figure(figsize=(12, 8))
     sns.barplot(x='ticker', y='cumulative_return', hue='strategy', data=results_df)
@@ -481,6 +533,7 @@ def evaluate_strategies(args):
     plt.xticks(rotation=45)
     plt.tight_layout()
     plt.savefig(os.path.join(args.output_dir, 'cumulative_returns_comparison.png'))
+    plt.close()
 
     # 2. Sharpe ratio by ticker and strategy
     plt.figure(figsize=(12, 8))
@@ -491,6 +544,7 @@ def evaluate_strategies(args):
     plt.xticks(rotation=45)
     plt.tight_layout()
     plt.savefig(os.path.join(args.output_dir, 'sharpe_ratio_comparison.png'))
+    plt.close()
 
     # 3. Max drawdown by ticker and strategy
     plt.figure(figsize=(12, 8))
@@ -501,6 +555,79 @@ def evaluate_strategies(args):
     plt.xticks(rotation=45)
     plt.tight_layout()
     plt.savefig(os.path.join(args.output_dir, 'max_drawdown_comparison.png'))
+    plt.close()
+
+    # Create Plotly interactive comparison visualizations
+    # 1. Cumulative return comparison
+    for metric in ['cumulative_return', 'sharpe_ratio', 'max_drawdown', 'win_rate']:
+        metric_title = {
+            'cumulative_return': 'Cumulative Return (%)',
+            'sharpe_ratio': 'Sharpe Ratio',
+            'max_drawdown': 'Maximum Drawdown (%)',
+            'win_rate': 'Win Rate (%)'
+        }.get(metric, metric)
+
+        chart_path = os.path.join(dashboards_dir, f'{metric}_comparison.html')
+        plot_strategy_comparison(
+            results_df=results_df,
+            metric=metric,
+            save_path=chart_path,
+            show=False,
+            chart_type='bar'
+        )
+        logger.info(f"Saved {metric_title} comparison chart to {chart_path}")
+
+    # 2. Multi-metric comparison dashboard
+    multi_metric_path = os.path.join(dashboards_dir, 'multi_metric_comparison.html')
+    plot_multi_metric_comparison(
+        results_df=results_df,
+        save_path=multi_metric_path,
+        show=False
+    )
+    logger.info(f"Saved multi-metric comparison dashboard to {multi_metric_path}")
+
+    # 3. Individual ticker dashboards
+    for ticker, ticker_data in all_data.items():
+        # Prepare data for dashboard
+        results_dict = {}
+        prices_dict = {}
+        actions_dict = {}
+        portfolio_values_dict = {}
+
+        # Extract data for each strategy
+        for strategy_name, strategy_data in ticker_data.items():
+            # Get metrics
+            if ticker in all_results and strategy_name in all_results[ticker]:
+                results_dict[strategy_name] = all_results[ticker][strategy_name]
+
+            # Get price, actions, and portfolio values
+            prices_dict[strategy_name] = strategy_data.get('prices', [])
+            actions_dict[strategy_name] = strategy_data.get('actions', [])
+            portfolio_values_dict[strategy_name] = strategy_data.get('portfolio_values', [])
+
+        # Create dashboard
+        if results_dict:
+            dashboard_path = os.path.join(dashboards_dir, f'{ticker}_dashboard.html')
+
+            create_dashboard(
+                results_dict=results_dict,
+                prices_dict=prices_dict,
+                actions_dict=actions_dict,
+                portfolio_values_dict=portfolio_values_dict,
+                save_path=dashboard_path,
+                show=False
+            )
+
+            logger.info(f"Dashboard for {ticker} saved to {dashboard_path}")
+
+    # Create full strategy dashboard for all tickers
+    full_dashboard_path = os.path.join(dashboards_dir, 'full_strategy_dashboard.html')
+    plot_multi_metric_comparison(
+        results_df=results_df,
+        save_path=full_dashboard_path,
+        show=False
+    )
+    logger.info(f"Full strategy dashboard saved to {full_dashboard_path}")
 
     # If MADDQN was evaluated, show agent decision analysis
     if args.model_path:
@@ -519,6 +646,7 @@ def evaluate_strategies(args):
         plt.title(f'MADDQN ({timesnet_type.capitalize()}) Final Agent Decision Sources')
         plt.tight_layout()
         plt.savefig(os.path.join(args.output_dir, 'maddqn_decision_sources.png'))
+        plt.close()
 
     return results_df
 
@@ -554,6 +682,7 @@ def main():
     results = evaluate_strategies(args)
 
     logger.info(f"Comparison complete. Results saved to {args.output_dir}")
+    logger.info(f"Interactive visualizations available in {os.path.join(args.output_dir, 'dashboards')}")
 
 
 if __name__ == "__main__":

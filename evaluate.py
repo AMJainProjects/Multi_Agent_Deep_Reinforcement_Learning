@@ -11,6 +11,8 @@ from collections import defaultdict
 from data_loader import FinancialDataLoader
 from environment import TradingEnvironment
 from structure.timesnet_factory import create_maddqn
+# Add imports for Plotly visualization utilities
+from plotly_utils.plotly_utils import plot_backtest_results, create_dashboard, plot_agent_decisions
 
 # Configure logging
 logging.basicConfig(
@@ -130,6 +132,10 @@ def evaluate_model(args):
     # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
 
+    # Create dashboards directory
+    dashboards_dir = os.path.join(args.output_dir, 'dashboards')
+    os.makedirs(dashboards_dir, exist_ok=True)
+
     # Load model configuration to determine TimesNet type
     model_config = load_model_config(args.model_path, device)
     timesnet_type = model_config.get('timesnet_type', 'basic')
@@ -141,6 +147,7 @@ def evaluate_model(args):
     data_loader = FinancialDataLoader(cache_dir=args.data_cache)
 
     results = {}
+    all_data = {}  # Store data for dashboard creation
 
     # Process tickers
     if args.tickers:
@@ -219,6 +226,7 @@ def evaluate_model(args):
         return_actions = []
         final_actions = []
         prices = []
+        total_values = []
 
         logger.info("Starting evaluation episode")
 
@@ -250,6 +258,7 @@ def evaluate_model(args):
                 return_actions.append(return_action)
                 final_actions.append(action)
                 prices.append(info['price'])
+                total_values.append(info['total_value'])
 
                 # Update state
                 state = next_state
@@ -257,6 +266,17 @@ def evaluate_model(args):
         # Calculate performance metrics
         metrics = calculate_metrics(env)
         results[ticker] = metrics
+
+        # Store data for dashboard creation
+        all_data[ticker] = {
+            'MADDQN': {
+                'prices': prices,
+                'actions': final_actions,
+                'portfolio_values': total_values,
+                'risk_actions': risk_actions,
+                'return_actions': return_actions
+            }
+        }
 
         logger.info(f"Results for {ticker}:")
         for metric, value in metrics.items():
@@ -266,7 +286,7 @@ def evaluate_model(args):
         actions_df = pd.DataFrame(actions_history)
         actions_df.to_csv(os.path.join(args.output_dir, f"{ticker}_actions.csv"), index=False)
 
-        # Plot results
+        # Create traditional matplotlib plot
         plt.figure(figsize=(15, 10))
 
         # Plot price with actions
@@ -290,7 +310,6 @@ def evaluate_model(args):
 
         # Plot portfolio value
         plt.subplot(2, 1, 2)
-        total_values = [item['total_value'] for item in actions_history]
         plt.plot(total_values, label='Portfolio Value')
         plt.title(f"{ticker} Portfolio Value")
         plt.xlabel('Step')
@@ -307,6 +326,35 @@ def evaluate_model(args):
 
         plt.tight_layout()
         plt.savefig(os.path.join(args.output_dir, f"{ticker}_evaluation.png"))
+        plt.close()
+
+        # Create Plotly interactive backtesting chart
+        backtest_filepath = os.path.join(dashboards_dir, f"{ticker}_backtest.html")
+        plot_backtest_results(
+            prices=prices,
+            actions=final_actions,
+            total_values=total_values,
+            risk_actions=risk_actions,
+            return_actions=return_actions,
+            metrics=metrics,
+            save_path=backtest_filepath,
+            show=False,
+            ticker=ticker
+        )
+        logger.info(f"Saved interactive backtest chart to {backtest_filepath}")
+
+        # Create agent decision analysis visualization
+        agent_filepath = os.path.join(dashboards_dir, f"{ticker}_agent_analysis.html")
+        plot_agent_decisions(
+            risk_actions=risk_actions,
+            return_actions=return_actions,
+            final_actions=final_actions,
+            prices=prices,
+            save_path=agent_filepath,
+            show=False,
+            ticker=ticker
+        )
+        logger.info(f"Saved agent decision analysis to {agent_filepath}")
 
         # Analyze agent agreement
         agreement_count = sum(1 for ra, rta, fa in zip(risk_actions, return_actions, final_actions)
@@ -344,6 +392,63 @@ def evaluate_model(args):
     with open(os.path.join(args.output_dir, 'evaluation_results.json'), 'w') as f:
         json.dump(results, f, indent=4)
 
+    # Create results DataFrame for strategy dashboards
+    results_df = pd.DataFrame(columns=['ticker', 'strategy', 'cumulative_return', 'annualized_return',
+                                       'sharpe_ratio', 'max_drawdown', 'win_rate', 'total_trades'])
+
+    row_idx = 0
+    for ticker, metrics in results.items():
+        if ticker != 'average':  # Skip the average entry
+            results_df.loc[row_idx] = [
+                ticker,
+                'MADDQN',
+                metrics['cumulative_return'],
+                metrics['annualized_return'],
+                metrics['sharpe_ratio'],
+                metrics['max_drawdown'],
+                metrics['win_rate'],
+                metrics['total_trades']
+            ]
+            row_idx += 1
+
+    # Save results DataFrame for dashboard creation
+    results_df.to_csv(os.path.join(args.output_dir, 'strategy_comparison.csv'), index=False)
+
+    # Create comprehensive dashboard for each ticker
+    for ticker, ticker_data in all_data.items():
+        # Prepare data for dashboard
+        results_dict = {}
+        prices_dict = {}
+        actions_dict = {}
+        portfolio_values_dict = {}
+
+        # Get MADDQN data
+        maddqn_data = ticker_data.get('MADDQN', {})
+
+        # Extract metrics for MADDQN
+        if ticker in results:
+            results_dict['MADDQN'] = results[ticker]
+
+        # Extract price, actions, and portfolio values
+        prices_dict['MADDQN'] = maddqn_data.get('prices', [])
+        actions_dict['MADDQN'] = maddqn_data.get('actions', [])
+        portfolio_values_dict['MADDQN'] = maddqn_data.get('portfolio_values', [])
+
+        # Create dashboard
+        if results_dict:
+            dashboard_path = os.path.join(dashboards_dir, f'{ticker}_dashboard.html')
+
+            create_dashboard(
+                results_dict=results_dict,
+                prices_dict=prices_dict,
+                actions_dict=actions_dict,
+                portfolio_values_dict=portfolio_values_dict,
+                save_path=dashboard_path,
+                show=False
+            )
+
+            logger.info(f"Dashboard for {ticker} saved to {dashboard_path}")
+
     return results
 
 
@@ -378,6 +483,7 @@ def main():
     results = evaluate_model(args)
 
     logger.info(f"Evaluation complete. Results saved to {args.output_dir}")
+    logger.info(f"Interactive visualizations available in {os.path.join(args.output_dir, 'dashboards')}")
 
 
 if __name__ == "__main__":

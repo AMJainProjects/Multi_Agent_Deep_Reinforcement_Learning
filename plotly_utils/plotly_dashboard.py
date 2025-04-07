@@ -10,7 +10,7 @@ import os
 import argparse
 import pandas as pd
 import json
-from plot_utils import create_dashboard, plot_multi_metric_comparison
+from plotly_utils.plotly_utils import create_dashboard, plot_multi_metric_comparison
 
 def load_results(comparison_dir):
     """

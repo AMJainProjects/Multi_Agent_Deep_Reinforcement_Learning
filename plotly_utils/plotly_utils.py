@@ -8,9 +8,6 @@ This module provides interactive visualization functions for:
 4. Agent decision analysis
 """
 
-import os
-import numpy as np
-import pandas as pd
 import plotly.graph_objs as go
 import plotly.express as px
 from plotly.subplots import make_subplots
